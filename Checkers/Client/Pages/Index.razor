@@ -1,0 +1,60 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+
+<article>
+@if (inGame)
+{
+    <Checkerboard HubConnection="hubConnection" TableId="@tableId" IsWhitePlayer="isWhite"/>
+}
+else
+{
+    <button class="btn btn-primary d-block mb-2" @onclick="CreateGame">Create Game</button> 
+
+    @foreach (string table in tables)
+    {
+        <button class="btn btn-success d-block mb-2" @onclick="()=>JoinGame(table)">Join Table @table</button>
+    }
+}
+</article>
+
+
+@code {
+    HubConnection hubConnection = new HubConnectionBuilder()
+            .WithUrl("https://localhost:44371/connect").Build();
+
+    bool inGame = false;
+    string tableId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshTables();
+    }
+
+    async Task RefreshTables()
+    {
+        HttpClient client = new HttpClient();
+        tables = await client.GetFromJsonAsync<List<string>>("https://localhost:44371/api/GetTables");
+    }
+
+    async Task CreateGame()
+    {
+        await hubConnection.StartAsync();
+        tableId = Guid.NewGuid().ToString();
+        await hubConnection.SendAsync("JoinTable", tableId);
+        inGame = true;
+    }
+
+    List<string> tables = new List<string>();
+
+
+    async Task JoinGame(string tableId)
+    {
+        await hubConnection.StartAsync();
+        this.tableId = tableId;
+        isWhite = false;
+        await hubConnection.SendAsync("JoinTable", tableId);
+        inGame = true;
+    }
+
+    bool isWhite = true;
+}

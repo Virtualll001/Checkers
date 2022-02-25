@@ -1,0 +1,211 @@
+﻿@using Checkers.Client.Data
+@using Microsoft.AspNetCore.SignalR.Client
+
+@for (int i = 0; i < 8; i++)
+{
+    int localI = i;
+    <div class="row">
+        @for (int j = 0; j < 8; j++)
+        {
+            int localJ = j;
+            var checker = blackCheckers.FirstOrDefault(n => n.Column == j && n.Row == i);
+            if (checker == null)
+            {
+                checker = whiteCheckers.FirstOrDefault(n => n.Column == j && n.Row == i);
+            }
+
+            bool canMoveHere = cellsPossible.Contains((i, j));
+
+            <div @onclick="() => MoveChecker(localI, localJ)" class="cell @(canMoveHere ? "active" : "")">
+                @if (checker != null)
+                {
+                    <div @onclick="()=>CheckerClicked(checker)"
+             class="checker @checker.Color @(checker == activeChecker ? "active" : "")">
+                        <span>@(checker.Direction == CheckerDirection.Both? "♛" : "")</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+
+@code {
+    [Parameter]
+    public HubConnection HubConnection { get; set; }
+    [Parameter]
+    public string TableId { get; set; }
+    [Parameter]
+    public bool IsWhitePlayer { get; set; }
+
+    bool whiteTurn = true; //jediná proměnná na střídání hráčů
+
+    List<Checker> blackCheckers = new List<Checker>();
+    List<Checker> whiteCheckers = new List<Checker>();
+
+    protected override void OnInitialized()
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = (i + 1) % 2; j < 8; j += 2)
+            {
+                blackCheckers.Add(new Checker
+                    {
+                        Color = "black",
+                        Column = j,
+                        Row = i,
+                        Direction = CheckerDirection.Down
+                    });
+            }
+        }
+
+        for (int i = 5; i < 8; i++)
+        {
+            for (int j = (i + 1) % 2; j < 8; j += 2)
+            {
+                whiteCheckers.Add(new Checker
+                    {
+                        Color = "white",
+                        Column = j,
+                        Row = i,
+                        Direction = CheckerDirection.Up
+                    });
+            }
+        }
+
+        HubConnection.On("TableJoined", () =>
+        {
+
+        });
+        HubConnection.On<int, int, int, int>("Move", ServerMove);
+    }
+
+    void ServerMove(int previousColumn, int previousRow, int newColumn, int newRow)
+    {
+        var checker = blackCheckers.FirstOrDefault(n => n.Column == previousColumn && n.Row == previousRow);
+        if(checker == null)
+        {
+            checker = whiteCheckers.FirstOrDefault(n => n.Column == previousColumn && n.Row == previousRow);
+        }
+        activeChecker = checker;
+        EvaluateCheckerSpots();
+        MoveChecker(newRow, newColumn);
+        StateHasChanged();
+    }
+
+
+    Checker activeChecker = null;
+    List<(int row, int column)> cellsPossible = new();
+
+    void EvaluateCheckerSpots()
+    {
+        cellsPossible.Clear();
+        if (activeChecker != null)
+        {
+            List<int> rowsPossible = new List<int>();
+            if (activeChecker.Direction == CheckerDirection.Down ||
+            activeChecker.Direction == CheckerDirection.Both)
+            {
+                rowsPossible.Add(activeChecker.Row + 1);
+            }
+            if (activeChecker.Direction == CheckerDirection.Up ||
+            activeChecker.Direction == CheckerDirection.Both)
+            {
+                rowsPossible.Add(activeChecker.Row - 1);
+            }
+
+            foreach (var row in rowsPossible)
+            {
+                EvaluateSpot(row, activeChecker.Column - 1);
+                EvaluateSpot(row, activeChecker.Column + 1);
+
+                //cellsPossible.Add((row, activeChecker.Column - 1));
+                //cellsPossible.Add((row, activeChecker.Column + 1));
+            }
+        }
+    }
+
+    void MoveChecker(int row, int column)
+    {
+        //bool canMoveHere = rowsPossible.Contains(row) && columnsPossible.Contains(column);
+        bool canMoveHere = cellsPossible.Contains((row, column));
+        if (!canMoveHere)
+            return;
+
+        if (Math.Abs(activeChecker.Column - column) == 2)
+        {
+            //we jumped something
+            int jumpedColumn = (activeChecker.Column + column) / 2;
+            int jumpedRow = (activeChecker.Row + row) / 2;
+
+            var blackChecker = blackCheckers.FirstOrDefault(n => n.Row == jumpedRow && n.Column == jumpedColumn);
+            if (blackChecker != null)
+                blackCheckers.Remove(blackChecker);
+
+            var whiteChecker = whiteCheckers.FirstOrDefault(n => n.Row == jumpedRow && n.Column == jumpedColumn);
+            if (whiteChecker != null)
+                whiteCheckers.Remove(whiteChecker);
+        }
+
+        HubConnection.SendAsync("Move", TableId, activeChecker.Column, activeChecker.Row, column, row);
+
+
+        activeChecker.Column = column;
+        activeChecker.Row = row;
+
+        if (activeChecker.Row == 0 && activeChecker.Color == "white")
+        {
+            activeChecker.Direction = CheckerDirection.Both;
+        }
+        if (activeChecker.Row == 7 && activeChecker.Color == "black")
+        {
+            activeChecker.Direction = CheckerDirection.Both;
+        }
+
+        activeChecker = null;
+        whiteTurn = !whiteTurn;
+        EvaluateCheckerSpots();
+    }
+
+    void EvaluateSpot(int row, int column, bool firstTime = true)
+    {
+        var blackChecker = blackCheckers.FirstOrDefault(n => n.Column == column && n.Row == row);
+        var whiteChecker = whiteCheckers.FirstOrDefault(n => n.Column == column && n.Row == row);
+
+        if (blackChecker == null && whiteChecker == null)
+        {
+            cellsPossible.Add((row, column));
+        }
+        else if (firstTime)
+        {
+            if ((whiteTurn && blackChecker != null) || (!whiteTurn && whiteChecker != null))
+            {
+                int columnDifference = column - activeChecker.Column;
+                //if (columnDifference < 0)
+                //    columnDifference--;
+                //else
+                //    columnDifference++;
+                int rowDifference = row - activeChecker.Row;
+                //if (rowDifference < 0)
+                //    rowDifference--;
+                //else
+                //    rowDifference++;
+                EvaluateSpot(row + rowDifference, column + columnDifference, false);
+            }
+        }
+    }
+
+    void CheckerClicked(Checker checker)
+    {
+        if (whiteTurn != IsWhitePlayer)
+            return;      
+        if (whiteTurn && checker.Color == "black")
+            return;
+        if (!whiteTurn && checker.Color == "white")
+            return;
+        activeChecker = checker;
+        EvaluateCheckerSpots();
+    }
+
+
+}
